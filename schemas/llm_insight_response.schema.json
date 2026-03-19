@@ -1,0 +1,13 @@
+﻿{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LLM Insight Response",
+  "type": "object",
+  "properties": {
+    "headline": {"type": "string"},
+    "key_findings": {"type": "array", "items": {"type": "string"}},
+    "trend_or_pattern": {"type": "string"},
+    "caveats": {"type": "array", "items": {"type": "string"}},
+    "recommended_actions": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["headline", "key_findings", "trend_or_pattern", "caveats", "recommended_actions"]
+}

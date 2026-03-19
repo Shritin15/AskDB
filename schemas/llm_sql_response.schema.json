@@ -1,0 +1,13 @@
+﻿{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "LLM SQL Response",
+  "type": "object",
+  "properties": {
+    "status": {"type": "string", "enum": ["ok", "rejected"]},
+    "sql": {"type": "string"},
+    "reason": {"type": "string"},
+    "referenced_tables": {"type": "array", "items": {"type": "string"}},
+    "referenced_columns": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["status", "sql", "reason", "referenced_tables", "referenced_columns"]
+}
