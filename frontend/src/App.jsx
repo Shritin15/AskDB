@@ -203,7 +203,7 @@ export default function App() {
       <QueryHistoryPanel userMessages={userMessages} onJump={scrollToMessage} />
 
       {/* Floating: Schema Browser */}
-      <SchemaPanel schema={schema} activeDb={activeDb} />
+      <SchemaPanel schema={schema} activeDb={activeDb} databases={databases} onSwitch={db => { setActiveDb(db); setMessages([]) }} />
 
       {showConnect && (
         <ConnectModal
@@ -250,8 +250,9 @@ function QueryHistoryPanel({ userMessages, onJump }) {
 
 // ── Schema Panel (floating, bottom-right) ──────────────────────────────────
 
-function SchemaPanel({ schema, activeDb }) {
+function SchemaPanel({ schema, activeDb, databases, onSwitch }) {
   const [schemaOpen, setSchemaOpen] = useState({})
+  const [dropdownOpen, setDropdownOpen] = useState(false)
   function toggleTable(t) { setSchemaOpen(p => ({ ...p, [t]: !p[t] })) }
 
   return (
@@ -259,8 +260,28 @@ function SchemaPanel({ schema, activeDb }) {
       <div className="fp-title">
         <span className="fp-icon">🗂</span>
         Schema
-        <span className="fp-db-tag">{activeDb.name}</span>
+        <button
+          className="schema-db-dropdown-btn"
+          onClick={() => setDropdownOpen(o => !o)}
+          title="Switch database"
+        >
+          <span className="schema-db-active-name">{activeDb.icon} {activeDb.name}</span>
+          <span className={`schema-dropdown-arrow${dropdownOpen ? ' open' : ''}`}>▾</span>
+        </button>
       </div>
+      {dropdownOpen && (
+        <div className="schema-db-switcher">
+          {databases.map(db => (
+            <button
+              key={db.id}
+              className={`schema-db-btn${activeDb.id === db.id ? ' active' : ''}`}
+              onClick={() => { onSwitch(db); setDropdownOpen(false) }}
+            >
+              {db.icon} {db.name}
+            </button>
+          ))}
+        </div>
+      )}
       {!schema ? (
         <p className="fp-empty">Loading…</p>
       ) : Object.keys(schema).length === 0 ? (
