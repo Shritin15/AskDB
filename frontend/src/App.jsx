@@ -337,7 +337,7 @@ function ChatView({ messages, loading, input, setInput, onSubmit, onKeyDown, act
         <div className="input-wrap">
           <textarea
             className="chat-input"
-            placeholder={`Ask about ${activeDb.name}...`}
+            placeholder="Ask about the data..."
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={onKeyDown}
