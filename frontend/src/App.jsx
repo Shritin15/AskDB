@@ -92,9 +92,22 @@ export default function App() {
   useEffect(() => {
     setSchema(null)
     fetch(`${API}/schema?db_path=${encodeURIComponent(activeDb.path)}`)
-      .then(r => r.json())
-      .then(d => setSchema(d.tables))
-      .catch(() => {})
+      .then(r => {
+        if (!r.ok) throw new Error('not found')
+        return r.json()
+      })
+      .then(d => {
+        if (!d.tables) throw new Error('no tables')
+        setSchema(d.tables)
+      })
+      .catch(() => {
+        // DB not accessible (e.g. local file on hosted version) — remove it and fall back
+        const isDefault = DEFAULT_DBS.find(d => d.id === activeDb.id)
+        if (!isDefault) {
+          setDatabases(prev => prev.filter(d => d.id !== activeDb.id))
+          setActiveDb(DEFAULT_DBS[0])
+        }
+      })
   }, [activeDb])
 
   useEffect(() => {
