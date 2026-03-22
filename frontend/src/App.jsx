@@ -88,9 +88,12 @@ export default function App() {
     localStorage.setItem('askdb_active_db', JSON.stringify(activeDb))
   }, [activeDb])
 
-  // Load schema whenever active DB changes
+  const [suggestions, setSuggestions] = useState([])
+
+  // Load schema + suggestions whenever active DB changes
   useEffect(() => {
     setSchema(null)
+    setSuggestions([])
     fetch(`${API}/schema?db_path=${encodeURIComponent(activeDb.path)}`)
       .then(r => {
         if (!r.ok) throw new Error('not found')
@@ -108,6 +111,11 @@ export default function App() {
           setActiveDb(DEFAULT_DBS[0])
         }
       })
+    // Load schema-aware suggestions
+    fetch(`${API}/suggest?db_path=${encodeURIComponent(activeDb.path)}`)
+      .then(r => r.json())
+      .then(d => { if (d.questions) setSuggestions(d.questions.slice(0, 4)) })
+      .catch(() => {})
   }, [activeDb])
 
   useEffect(() => {
@@ -238,7 +246,8 @@ export default function App() {
             activeDb={activeDb}
             bottomRef={bottomRef}
             msgRefs={msgRefs}
-            onSuggestion={q => setInput(q)}
+            onSuggestion={q => { setInput(q) }}
+            suggestions={suggestions}
           />
         )}
         {tab === 'dq' && <DataQualityView activeDb={activeDb} />}
@@ -360,7 +369,9 @@ function SchemaPanel({ schema, activeDb, databases, onSwitch }) {
 
 // ── Chat View ──────────────────────────────────────────────────────────────
 
-function ChatView({ messages, loading, input, setInput, onSubmit, onKeyDown, activeDb, bottomRef, msgRefs, onSuggestion }) {
+function ChatView({ messages, loading, input, setInput, onSubmit, onKeyDown, activeDb, bottomRef, msgRefs, onSuggestion, suggestions }) {
+  const fallbackSuggestions = ['How many records are in each table?', 'Show top 10 rows', 'What are the most common values?', 'Show a summary of the data']
+  const chips = suggestions && suggestions.length > 0 ? suggestions : fallbackSuggestions
   return (
     <div className="chat-view">
       <div className="messages-area">
@@ -369,7 +380,7 @@ function ChatView({ messages, loading, input, setInput, onSubmit, onKeyDown, act
             <h2>What would you like<br />to know?</h2>
             <p>Ask anything about your database in plain English</p>
             <div className="suggestions">
-              {['Show total sales by country', 'Who are the top 5 customers?'].map(s => (
+              {chips.map(s => (
                 <button key={s} className="suggestion-chip" onClick={() => onSuggestion(s)}>{s}</button>
               ))}
             </div>
@@ -432,40 +443,76 @@ function polarToCartesian(cx, cy, r, deg) {
   return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) }
 }
 
-function pieSlice(cx, cy, r, start, end, color, key) {
-  const s = polarToCartesian(cx, cy, r, start)
-  const e = polarToCartesian(cx, cy, r, end)
-  const large = end - start > 180 ? 1 : 0
-  const d = `M ${cx} ${cy} L ${s.x} ${s.y} A ${r} ${r} 0 ${large} 1 ${e.x} ${e.y} Z`
-  return <path key={key} d={d} fill={color} stroke="rgba(0,0,0,0.25)" strokeWidth="1" />
+// Resolve chart type: prefer backend viz.kind, fall back to heuristics
+function resolveChartType(viz, columns, rows) {
+  if (!columns || !rows || rows.length < 2) return null
+  // Use backend decision if available and not "table"
+  if (viz && viz.kind && viz.kind !== 'table') return viz.kind
+  // Heuristic fallback: 2 cols, second numeric
+  if (columns.length === 2) {
+    const vals = rows.map(r => parseFloat(r[1]))
+    if (vals.some(isNaN)) return null
+    const sum = vals.reduce((a, b) => a + b, 0)
+    if (sum > 85 && sum < 115) return 'pie'
+    return 'bar'
+  }
+  return null
 }
 
-function detectChart(columns, rows) {
-  if (!columns || columns.length !== 2 || !rows || rows.length < 2) return null
-  const vals = rows.map(r => parseFloat(r[1]))
-  if (vals.some(isNaN)) return null
-  const sum = vals.reduce((a, b) => a + b, 0)
-  if (sum > 85 && sum < 115) return 'pie'
-  return 'bar'
-}
-
-function ChartRenderer({ columns, rows }) {
-  const type = detectChart(columns, rows)
+function ChartRenderer({ columns, rows, viz }) {
+  const type = resolveChartType(viz, columns, rows)
   const [tooltip, setTooltip] = useState(null)
-  if (!type) return null
+  const [chartType, setChartType] = useState(null)
 
-  const labels = rows.map(r => String(r[0]))
-  const values = rows.map(r => parseFloat(r[1]))
+  useEffect(() => { setChartType(type) }, [type])
+
+  if (!chartType) return null
+
+  // Identify x/y columns from backend hint or default to col 0/1
+  const xColIdx = viz?.x ? columns.indexOf(viz.x) : 0
+  const yColIdx = viz?.y ? columns.indexOf(viz.y) : 1
+  const safeX = xColIdx >= 0 ? xColIdx : 0
+  const safeY = yColIdx >= 0 ? yColIdx : 1
+
+  const labels = rows.map(r => String(r[safeX] ?? ''))
+  const values = rows.map(r => parseFloat(r[safeY]))
   const total  = values.reduce((a, b) => a + b, 0)
 
-  const showTip = (e, label, value, isPct) => {
-    const rect = e.currentTarget.closest('svg').getBoundingClientRect()
-    setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top - 36, label, value, isPct })
+  const showTip = (e, label, value) => {
+    const svg = e.currentTarget.closest('svg')
+    if (!svg) return
+    const rect = svg.getBoundingClientRect()
+    setTooltip({ x: e.clientX - rect.left, y: e.clientY - rect.top - 36, label, value })
   }
   const hideTip = () => setTooltip(null)
 
-  if (type === 'pie') {
-    const cx = 90, cy = 90, r = 72
+  const Tooltip = ({ x, y, label, value, isPct }) => (
+    <g transform={`translate(${x},${y})`}>
+      <rect x="-60" y="-24" width="120" height="24" rx="6" fill="rgba(28,28,30,0.97)" stroke="rgba(255,255,255,0.1)" strokeWidth="1"/>
+      <text textAnchor="middle" y="-8" fontSize="10" fill="rgba(235,235,245,0.9)" fontFamily="system-ui">
+        {String(label).slice(0, 18)}: {isPct ? value.toFixed(1) + '%' : Number(value).toLocaleString()}
+      </text>
+    </g>
+  )
+
+  const typeOptions = ['bar', 'line', 'pie'].filter(t => {
+    if (t === 'pie') return rows.length <= 12
+    return true
+  })
+
+  const TypeToggle = () => (
+    <div className="chart-type-toggle">
+      {typeOptions.map(t => (
+        <button key={t} className={`chart-type-btn${chartType === t ? ' active' : ''}`} onClick={() => setChartType(t)}>
+          {t === 'bar' ? '📊' : t === 'line' ? '📈' : '🥧'}
+        </button>
+      ))}
+    </div>
+  )
+
+  // ── Pie ──────────────────────────────────────────────────────────────────
+  if (chartType === 'pie') {
+    const cx = 100, cy = 100, r = 82
     let angle = 0
     const slices = values.map((v, i) => {
       const sweep = (v / total) * 360
@@ -477,75 +524,161 @@ function ChartRenderer({ columns, rows }) {
       angle += sweep
       return (
         <path key={i} d={d} fill={color} stroke="rgba(0,0,0,0.25)" strokeWidth="1"
-          style={{ cursor: 'pointer', transition: 'opacity 0.15s' }}
-          onMouseEnter={ev => showTip(ev, labels[i], v, true)}
+          style={{ cursor: 'pointer' }}
+          onMouseEnter={ev => showTip(ev, labels[i], (v / total) * 100)}
           onMouseLeave={hideTip}
-          onMouseMove={ev => showTip(ev, labels[i], v, true)}
+          onMouseMove={ev => showTip(ev, labels[i], (v / total) * 100)}
         />
       )
     })
     return (
       <div className="chart-wrap">
-        <svg width="180" height="180" viewBox="0 0 180 180" style={{ overflow: 'visible' }}>
-          <circle cx={cx} cy={cy} r={r} fill="rgba(0,0,0,0.3)" />
-          {slices}
-          <circle cx={cx} cy={cy} r={32} fill="rgba(10,10,14,0.95)" />
-          {tooltip && (
-            <g transform={`translate(${tooltip.x},${tooltip.y})`}>
-              <rect x="-50" y="-22" width="100" height="22" rx="6" fill="rgba(28,28,30,0.97)" stroke="rgba(255,255,255,0.1)" strokeWidth="1"/>
-              <text textAnchor="middle" y="-7" fontSize="10" fill="rgba(235,235,245,0.9)" fontFamily="system-ui">
-                {tooltip.label.slice(0,16)}: {tooltip.value.toFixed(1)}%
-              </text>
-            </g>
-          )}
-        </svg>
-        <div className="chart-legend">
-          {labels.map((l, i) => (
-            <div key={i} className="legend-item">
-              <span className="legend-dot" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
-              <span className="legend-label">{l}</span>
-              <span className="legend-val">{values[i].toFixed(1)}%</span>
-            </div>
-          ))}
+        <TypeToggle />
+        <div className="pie-row">
+          <svg width="200" height="200" viewBox="0 0 200 200" style={{ overflow: 'visible', flexShrink: 0 }}>
+            <circle cx={cx} cy={cy} r={r} fill="rgba(0,0,0,0.3)" />
+            {slices}
+            <circle cx={cx} cy={cy} r={36} fill="rgba(10,10,14,0.95)" />
+            <text x={cx} y={cy+4} textAnchor="middle" fontSize="11" fill="rgba(235,235,245,0.6)" fontFamily="system-ui">
+              {rows.length} items
+            </text>
+            {tooltip && <Tooltip {...tooltip} isPct={true} />}
+          </svg>
+          <div className="chart-legend">
+            {labels.map((l, i) => (
+              <div key={i} className="legend-item">
+                <span className="legend-dot" style={{ background: CHART_COLORS[i % CHART_COLORS.length] }} />
+                <span className="legend-label" title={l}>{l.slice(0, 20)}</span>
+                <span className="legend-val">{((values[i] / total) * 100).toFixed(1)}%</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     )
   }
 
-  // Bar chart
-  const max = Math.max(...values)
-  const barW = 34, gap = 14, svgW = Math.max(rows.length * (barW + gap) + gap, 240)
+  // ── Line ─────────────────────────────────────────────────────────────────
+  if (chartType === 'line') {
+    const W = 480, H = 160, pad = { l: 48, r: 16, t: 16, b: 36 }
+    const innerW = W - pad.l - pad.r
+    const innerH = H - pad.t - pad.b
+    const numVals = values.filter(v => !isNaN(v))
+    const minV = Math.min(...numVals), maxV = Math.max(...numVals)
+    const rangeV = maxV - minV || 1
+    const pts = values.map((v, i) => ({
+      x: pad.l + (i / Math.max(values.length - 1, 1)) * innerW,
+      y: pad.t + innerH - ((v - minV) / rangeV) * innerH,
+      label: labels[i], value: v
+    }))
+    const pathD = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ')
+    const areaD = `${pathD} L ${pts[pts.length-1].x} ${pad.t + innerH} L ${pad.l} ${pad.t + innerH} Z`
+    // Y-axis labels
+    const ySteps = 4
+    const yLabels = Array.from({length: ySteps + 1}, (_, i) => ({
+      y: pad.t + innerH - (i / ySteps) * innerH,
+      val: minV + (i / ySteps) * rangeV
+    }))
+    // X-axis: show up to 8 labels
+    const xStep = Math.ceil(labels.length / 8)
+    return (
+      <div className="chart-wrap line-chart-wrap">
+        <TypeToggle />
+        <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} style={{ overflow: 'visible' }}>
+          <defs>
+            <linearGradient id="lineGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#0a84ff" stopOpacity="0.3"/>
+              <stop offset="100%" stopColor="#0a84ff" stopOpacity="0"/>
+            </linearGradient>
+          </defs>
+          {/* Grid lines */}
+          {yLabels.map((yl, i) => (
+            <g key={i}>
+              <line x1={pad.l} y1={yl.y} x2={W - pad.r} y2={yl.y} stroke="rgba(255,255,255,0.06)" strokeWidth="1"/>
+              <text x={pad.l - 6} y={yl.y + 4} textAnchor="end" fontSize="9" fill="rgba(235,235,245,0.4)">
+                {Number(yl.val).toLocaleString(undefined, {maximumFractionDigits: 0})}
+              </text>
+            </g>
+          ))}
+          {/* X-axis labels */}
+          {pts.filter((_, i) => i % xStep === 0).map((p, i) => (
+            <text key={i} x={p.x} y={H - 4} textAnchor="middle" fontSize="9" fill="rgba(235,235,245,0.4)">
+              {String(p.label).slice(0, 8)}
+            </text>
+          ))}
+          {/* Area fill */}
+          <path d={areaD} fill="url(#lineGrad)" />
+          {/* Line */}
+          <path d={pathD} fill="none" stroke="#0a84ff" strokeWidth="2" strokeLinejoin="round"/>
+          {/* Dots */}
+          {pts.map((p, i) => (
+            <circle key={i} cx={p.x} cy={p.y} r="3" fill="#0a84ff"
+              style={{ cursor: 'pointer' }}
+              onMouseEnter={ev => showTip(ev, p.label, p.value)}
+              onMouseLeave={hideTip}
+              onMouseMove={ev => showTip(ev, p.label, p.value)}
+            />
+          ))}
+          {tooltip && <Tooltip {...tooltip} isPct={false} />}
+        </svg>
+      </div>
+    )
+  }
+
+  // ── Bar ──────────────────────────────────────────────────────────────────
+  const max = Math.max(...values.filter(v => !isNaN(v)))
+  const barW = Math.max(20, Math.min(40, Math.floor(420 / rows.length) - 8))
+  const gap = Math.max(6, Math.min(14, Math.floor(barW / 3)))
+  const svgW = Math.max(rows.length * (barW + gap) + gap + 40, 280)
   return (
     <div className="chart-wrap bar-chart-wrap">
-      <svg width="100%" height="160" viewBox={`0 0 ${svgW} 160`} style={{ overflow: 'visible' }}>
+      <TypeToggle />
+      <svg width="100%" height="180" viewBox={`0 0 ${svgW} 180`} style={{ overflow: 'visible' }}>
+        {/* Y-axis grid */}
+        {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => (
+          <g key={i}>
+            <line x1="0" y1={10 + (1 - pct) * 130} x2={svgW} y2={10 + (1 - pct) * 130}
+              stroke="rgba(255,255,255,0.05)" strokeWidth="1"/>
+          </g>
+        ))}
         {values.map((v, i) => {
-          const bh = Math.max((v / max) * 120, 2)
+          if (isNaN(v)) return null
+          const bh = Math.max((v / max) * 130, 2)
           const x = i * (barW + gap) + gap
           const color = CHART_COLORS[i % CHART_COLORS.length]
           return (
             <g key={i} style={{ cursor: 'pointer' }}
-              onMouseEnter={ev => showTip(ev, labels[i], v, false)}
+              onMouseEnter={ev => showTip(ev, labels[i], v)}
               onMouseLeave={hideTip}
-              onMouseMove={ev => showTip(ev, labels[i], v, false)}>
-              <rect x={x} y={135 - bh} width={barW} height={bh} fill={color} rx="4" opacity="0.85"
-                style={{ transition: 'opacity 0.15s' }} />
-              <text x={x + barW/2} y={152} textAnchor="middle" fontSize="9" fill="rgba(235,235,245,0.4)">
-                {String(labels[i]).slice(0, 7)}
+              onMouseMove={ev => showTip(ev, labels[i], v)}>
+              <rect x={x} y={140 - bh} width={barW} height={bh} fill={color} rx="3" opacity="0.85"/>
+              <text x={x + barW/2} y={156} textAnchor="middle" fontSize="8" fill="rgba(235,235,245,0.4)">
+                {String(labels[i]).slice(0, Math.max(6, barW / 7))}
               </text>
             </g>
           )
         })}
-        {tooltip && (
-          <g transform={`translate(${tooltip.x},${tooltip.y})`}>
-            <rect x="-50" y="-22" width="100" height="22" rx="6" fill="rgba(28,28,30,0.97)" stroke="rgba(255,255,255,0.1)" strokeWidth="1"/>
-            <text textAnchor="middle" y="-7" fontSize="10" fill="rgba(235,235,245,0.9)" fontFamily="system-ui">
-              {tooltip.label.slice(0,14)}: {tooltip.value.toLocaleString()}
-            </text>
-          </g>
-        )}
+        {tooltip && <Tooltip {...tooltip} isPct={false} />}
       </svg>
     </div>
   )
+}
+
+function detectChart(columns, rows, viz) {
+  return resolveChartType(viz, columns, rows)
+}
+
+function exportCSV(columns, rows) {
+  const header = columns.join(',')
+  const body = rows.map(r => r.map(cell => {
+    const v = cell === null ? '' : String(cell)
+    return v.includes(',') || v.includes('"') || v.includes('\n') ? `"${v.replace(/"/g, '""')}"` : v
+  }).join(',')).join('\n')
+  const blob = new Blob([header + '\n' + body], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = 'askdb_results.csv'; a.click()
+  URL.revokeObjectURL(url)
 }
 
 function Message({ msg }) {
@@ -580,7 +713,7 @@ function Message({ msg }) {
     )
   }
 
-  const chartType = detectChart(data.columns, data.rows)
+  const chartType = resolveChartType(data.viz, data.columns, data.rows)
 
   return (
     <div className="msg assistant">
@@ -591,10 +724,15 @@ function Message({ msg }) {
             {data.insight.key_findings.map((f, i) => <li key={i}>{f}</li>)}
           </ul>
         )}
-        {chartType && <ChartRenderer columns={data.columns} rows={data.rows} />}
+        {chartType && <ChartRenderer columns={data.columns} rows={data.rows} viz={data.viz} />}
         {data.columns?.length > 0 && (
           <div className="table-section">
-            <div className="table-label">{data.rows?.length} result{data.rows?.length !== 1 ? 's' : ''}</div>
+            <div className="table-label-row">
+              <span className="table-label">{data.rows?.length} result{data.rows?.length !== 1 ? 's' : ''}</span>
+              <button className="csv-export-btn" onClick={() => exportCSV(data.columns, data.rows)} title="Download CSV">
+                ↓ CSV
+              </button>
+            </div>
             <ResultsTable columns={data.columns} rows={data.rows} />
           </div>
         )}

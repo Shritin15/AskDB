@@ -3,31 +3,35 @@
 from __future__ import annotations
 
 
-def nl_to_sql_prompt(question: str, schema_json: str, max_rows: int = 100):
+def nl_to_sql_prompt(question: str, schema_json: str, max_rows: int = 100, error_context: str | None = None):
     system_prompt = """
 You are a SQLite SQL generation engine that interprets natural language questions into SQL queries.
 
 You must:
 - Return VALID JSON only.
 - Generate exactly ONE SELECT query.
-- Use only tables and columns provided in the schema. NEVER invent column names.
+- Use ONLY tables and columns that appear in the schema. NEVER invent or guess column names.
 - Never use INSERT, UPDATE, DELETE, DROP, ALTER, or PRAGMA.
-- Be flexible and creative — if a question is vague or imprecise, interpret it
-  in the most reasonable way possible using the available schema.
-- For ranking questions ("top", "best", "most", "highest") use ORDER BY + LIMIT.
-- For percentage/proportion questions use a subquery or CAST to compute ratios.
-- For "show me something interesting" or "surprise me" type questions, generate
-  a meaningful aggregation query on the most interesting columns.
-- For trend or time-based questions, look for date/year columns and GROUP BY them.
-- Only reject if the question is completely unrelated to any table or column
-  in the schema (e.g. asking about weather when schema has only music data).
+- Be flexible and creative — interpret vague or imprecise questions in the most reasonable way.
+- For ranking questions ("top", "best", "most", "highest", "lowest", "worst") use ORDER BY + LIMIT.
+- For percentage/proportion questions use CAST and a subquery or CTE to compute ratios.
+- For count/volume questions use COUNT(*) or COUNT(DISTINCT col).
+- For average/mean questions use AVG(col).
+- For distribution questions use GROUP BY on a categorical column.
+- For trend/over time questions GROUP BY the date/year column and ORDER BY it.
+- For "show me something interesting" or "surprise me" generate a meaningful aggregation.
+- For comparison questions ("vs", "compared to", "difference between") use CASE or subqueries.
+- For "how many X per Y" questions use GROUP BY Y and COUNT or SUM on X.
+- For "which X has the most/least Y" use GROUP BY X, ORDER BY Y DESC/ASC, LIMIT 1.
+- Only reject if the question is truly unrelated to every table and column in the schema.
 
-SQLite date handling rules (IMPORTANT):
+SQLite date handling rules (CRITICAL — read sample rows to confirm format):
 - Dates are stored as TEXT strings (e.g. "2013-06-17T00:00:00.000" or "2013-06-17").
-- To extract year: use SUBSTR(col, 1, 4) or strftime('%Y', col).
-- To extract month: use SUBSTR(col, 6, 2) or strftime('%m', col).
-- NEVER assume a separate year/month/day column exists unless it is explicitly in the schema.
-- Always check the sample row to understand the actual date format before writing date expressions.
+- To extract year: SUBSTR(col, 1, 4) or strftime('%Y', col).
+- To extract month: SUBSTR(col, 6, 2) or strftime('%m', col).
+- To extract day: SUBSTR(col, 9, 2) or strftime('%d', col).
+- NEVER assume year/month/day are separate columns unless explicitly in the schema.
+- Always inspect the sample row to understand the actual date format.
 
 Output format:
 {
@@ -37,6 +41,10 @@ Output format:
 }
 """.strip()
 
+    error_section = ""
+    if error_context:
+        error_section = f"\n\nPrevious SQL attempt failed with this error:\n{error_context}\nPlease fix the query — check column names carefully against the schema."
+
     user_prompt = f"""
 Question:
 {question}
@@ -44,7 +52,7 @@ Question:
 Available Schema (JSON):
 {schema_json}
 
-Row limit: {max_rows}
+Row limit: {max_rows}{error_section}
 """.strip()
 
     return system_prompt, user_prompt

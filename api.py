@@ -149,6 +149,16 @@ def _build_meta_response(db_path: Optional[str]) -> dict:
     }
 
 
+@app.get("/suggest")
+def suggest_questions(db_path: Optional[str] = Query(default=None)):
+    """Return schema-aware example questions for the connected database."""
+    try:
+        meta = _build_meta_response(db_path)
+        return {"questions": meta["insight"]["key_findings"]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/query")
 def query(body: QueryRequest):
     if not body.question.strip():

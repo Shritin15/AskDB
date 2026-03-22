@@ -18,6 +18,7 @@ def generate_sql_from_question(
     question: str,
     db_path: str,
     llm_client: LLMClient | None = None,
+    error_context: str | None = None,
 ) -> dict[str, Any]:
     """
     Convert a natural-language question into a structured JSON response
@@ -49,6 +50,7 @@ def generate_sql_from_question(
         question=question,
         schema_json=json.dumps(lean_schema),
         max_rows=100,
+        error_context=error_context,
     )
 
     return client.generate_json(system_prompt, user_prompt)
