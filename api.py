@@ -79,14 +79,74 @@ def get_schema(db_path: Optional[str] = Query(default=None)):
 
 
 META_KEYWORDS = [
+    # Help / usage
     "what can i ask", "what questions", "what should i ask",
     "help me", "how do i use", "what can you do", "example questions",
     "give me examples", "what do you answer", "guide me", "what topics",
+    # Database description
+    "tell me about", "describe this", "describe the", "what is this",
+    "about this database", "about the database", "what tables", "what data",
+    "overview", "summarize the database", "what does this db",
+    "what is in", "what's in", "whats in", "show me the tables",
+    "list the tables", "what columns", "database structure",
+    # Greetings / conversation
+    "hello", "hi ", "hey ", "good morning", "good afternoon",
+    "who are you", "what are you", "introduce yourself",
+    # Vague starters
+    "show me something", "surprise me", "give me insight",
+    "what's interesting", "what is interesting", "anything interesting",
+    "show me anything", "i don't know", "i dont know", "not sure what to ask",
 ]
 
 def _is_meta(q: str) -> bool:
-    ql = q.lower()
+    ql = q.lower().strip()
     return any(kw in ql for kw in META_KEYWORDS)
+
+def _build_meta_response(db_path: Optional[str]) -> dict:
+    """Build a dynamic help response based on the actual schema."""
+    try:
+        path = resolve_db(db_path)
+        schema = get_schema_metadata(path)
+        tables = list(schema.keys())
+        # Build example questions from actual table/column names
+        examples = []
+        for table in tables[:4]:
+            cols = [c["name"] for c in schema[table]["columns"]]
+            # Count question
+            examples.append(f"How many records are in {table}?")
+            # Find numeric-ish columns for aggregation
+            num_cols = [c for c in cols if any(x in c.lower() for x in
+                ["total", "amount", "count", "price", "age", "year", "date", "revenue", "salary"])]
+            text_cols = [c for c in cols if any(x in c.lower() for x in
+                ["name", "type", "category", "status", "gender", "race", "city", "country", "genre"])]
+            if num_cols and text_cols:
+                examples.append(f"Show {num_cols[0]} by {text_cols[0]} in {table}")
+            elif text_cols:
+                examples.append(f"What are the most common {text_cols[0]} values in {table}?")
+        if len(tables) > 1:
+            examples.append(f"Show top 10 records from {tables[0]}")
+        table_list = ", ".join(tables)
+    except Exception:
+        tables = []
+        examples = [
+            "Show top 10 records", "How many rows are in each table?",
+            "What are the most common values?", "Show a summary of the data",
+        ]
+        table_list = "unknown"
+
+    return {
+        "status": "ok",
+        "sql": None,
+        "columns": [],
+        "rows": [],
+        "viz": {"kind": "none", "x": None, "y": None},
+        "insight": {
+            "headline": f"Here's what you can explore! 🚀 Tables: {table_list}",
+            "key_findings": examples[:7],
+            "caveats": ["Try asking about specific tables, counts, trends, or comparisons"],
+            "confidence": "High",
+        },
+    }
 
 
 @app.post("/query")
@@ -96,27 +156,7 @@ def query(body: QueryRequest):
 
     # Handle meta / help questions without hitting the LLM
     if _is_meta(body.question):
-        return {
-            "status": "ok",
-            "sql": None,
-            "columns": [],
-            "rows": [],
-            "viz": {"kind": "none", "x": None, "y": None},
-            "insight": {
-                "headline": "Here are some great questions to ask! 🚀",
-                "key_findings": [
-                    "Show total sales by country",
-                    "Who are the top 5 customers by spending?",
-                    "What percentage of tracks belong to each media type?",
-                    "Show revenue by month for 2013",
-                    "Top 10 artists by number of albums",
-                    "How many tracks belong to each genre?",
-                    "Which employee has the highest total sales?",
-                ],
-                "caveats": ["Results depend on the currently selected database"],
-                "confidence": "High",
-            },
-        }
+        return _build_meta_response(body.db_path)
 
     db = resolve_db(body.db_path)
 
