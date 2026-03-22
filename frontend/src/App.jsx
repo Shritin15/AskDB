@@ -116,6 +116,14 @@ export default function App() {
 
   function switchDb(db) { setActiveDb(db); setMessages([]) }
 
+  function removeDb(e, db) {
+    e.stopPropagation()
+    if (DEFAULT_DBS.find(d => d.id === db.id)) return // protect built-in DBs
+    const remaining = databases.filter(d => d.id !== db.id)
+    setDatabases(remaining)
+    if (activeDb.id === db.id) { setActiveDb(DEFAULT_DBS[0]); setMessages([]) }
+  }
+
   const userMessages = messages.filter(m => m.role === 'user')
 
   return (
@@ -130,11 +138,16 @@ export default function App() {
         <div className="sidebar-section-label">Databases</div>
         <div className="db-list">
           {databases.map(db => (
-            <button key={db.id} className={`db-item ${activeDb.id === db.id ? 'active' : ''}`} onClick={() => switchDb(db)}>
-              <span className="db-icon">{db.icon}</span>
-              <span className="db-name">{db.name}</span>
-              {activeDb.id === db.id && <span className="db-dot" />}
-            </button>
+            <div key={db.id} className="db-item-wrap">
+              <button className={`db-item ${activeDb.id === db.id ? 'active' : ''}`} onClick={() => switchDb(db)}>
+                <span className="db-icon">{db.icon}</span>
+                <span className="db-name">{db.name}</span>
+                {activeDb.id === db.id && <span className="db-dot" />}
+              </button>
+              {!DEFAULT_DBS.find(d => d.id === db.id) && (
+                <button className="db-delete-btn" onClick={e => removeDb(e, db)} title="Remove database">✕</button>
+              )}
+            </div>
           ))}
         </div>
 
