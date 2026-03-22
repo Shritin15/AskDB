@@ -18,8 +18,18 @@ const PILL_COLORS = [
 ]
 
 export default function App() {
-  const [databases, setDatabases]     = useState(DEFAULT_DBS)
-  const [activeDb,  setActiveDb]      = useState(DEFAULT_DBS[0])
+  const [databases, setDatabases]     = useState(() => {
+    try {
+      const saved = localStorage.getItem('askdb_databases')
+      return saved ? JSON.parse(saved) : DEFAULT_DBS
+    } catch { return DEFAULT_DBS }
+  })
+  const [activeDb,  setActiveDb]      = useState(() => {
+    try {
+      const saved = localStorage.getItem('askdb_active_db')
+      return saved ? JSON.parse(saved) : DEFAULT_DBS[0]
+    } catch { return DEFAULT_DBS[0] }
+  })
   const [messages,  setMessages]      = useState([])
   const [input,     setInput]         = useState('')
   const [loading,   setLoading]       = useState(false)
@@ -68,6 +78,15 @@ export default function App() {
     raf = requestAnimationFrame(bounce)
     return () => cancelAnimationFrame(raf)
   }, [])
+
+  // Persist databases list and active db to localStorage
+  useEffect(() => {
+    localStorage.setItem('askdb_databases', JSON.stringify(databases))
+  }, [databases])
+
+  useEffect(() => {
+    localStorage.setItem('askdb_active_db', JSON.stringify(activeDb))
+  }, [activeDb])
 
   // Load schema whenever active DB changes
   useEffect(() => {
