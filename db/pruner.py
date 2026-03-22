@@ -100,14 +100,15 @@ def prune_schema(question: str, schema: dict, max_tables: int = 5) -> dict:
 
 def strip_samples(schema: dict) -> dict:
     """
-    Remove sample rows from the schema before sending to the LLM.
+    Reduce sample rows to 1 per table before sending to the LLM.
 
-    Sample rows are needed by the pruner/embedder to understand data meaning,
-    but they're the biggest token cost. Strip them after pruning is done.
-    Saves an additional 40-60% of schema tokens.
+    Keeping 1 sample row lets the LLM see the actual format of values
+    (e.g. dates stored as "2013-06-17T00:00:00.000") so it generates
+    correct expressions like SUBSTR(col, 1, 4) instead of hallucinating
+    a non-existent 'year' column. Saves ~60% tokens vs sending all 3 rows.
     """
     return {
-        table_name: {**table_info, "sample": []}
+        table_name: {**table_info, "sample": table_info.get("sample", [])[:1]}
         for table_name, table_info in schema.items()
     }
 
