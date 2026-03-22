@@ -728,7 +728,10 @@ function Message({ msg }) {
         {data.columns?.length > 0 && (
           <div className="table-section">
             <div className="table-label-row">
-              <span className="table-label">{data.rows?.length} result{data.rows?.length !== 1 ? 's' : ''}</span>
+              <span className="table-label">
+                {data.rows?.length} result{data.rows?.length !== 1 ? 's' : ''}
+                {data.truncated && <span className="truncated-badge" title="More rows exist — results were limited"> · truncated</span>}
+              </span>
               <button className="csv-export-btn" onClick={() => exportCSV(data.columns, data.rows)} title="Download CSV">
                 ↓ CSV
               </button>

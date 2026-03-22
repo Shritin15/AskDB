@@ -199,6 +199,7 @@ def query(body: QueryRequest):
         "sql": result["sql"],
         "columns": result["columns"],
         "rows": result["rows"],
+        "truncated": result.get("truncated", False),
         "viz": {"kind": viz.kind, "x": viz.x, "y": viz.y},
         "insight": insight,
     }

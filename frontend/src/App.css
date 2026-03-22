@@ -1366,3 +1366,11 @@ body {
 
 /* ── Bar chart dynamic sizing ────────────────────────────────────────────── */
 .bar-chart-wrap { overflow-x: auto; }
+
+/* ── Truncated badge ─────────────────────────────────────────────────────── */
+.truncated-badge {
+  color: #ff9f0a;
+  font-size: 10px;
+  font-weight: 500;
+  margin-left: 4px;
+}

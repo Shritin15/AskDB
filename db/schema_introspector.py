@@ -66,10 +66,34 @@ def get_schema_metadata(db_path: Path) -> dict[str, dict[str, Any]]:
                 for row in fk_rows
             ]
 
+            # --- Column stats: MIN/MAX for date and numeric columns ---
+            # These cheap aggregate queries give the LLM critical context like
+            # "referral_date ranges from 2001-01-01 to 2024-12-31" so it writes
+            # accurate WHERE clauses and never guesses that data stops early.
+            stats: dict = {}
+            _DATE_HINTS = ("date", "time", "year", "month")
+            _NUM_HINTS  = ("int", "real", "float", "numeric", "decimal", "double", "number")
+            for col in columns:
+                col_name = col["name"]
+                col_type = col["type"].lower() if col["type"] else ""
+                is_date = any(h in col_name.lower() for h in _DATE_HINTS) or \
+                          any(h in col_type for h in ("date", "time"))
+                is_num  = any(h in col_type for h in _NUM_HINTS)
+                if is_date or is_num:
+                    try:
+                        row = cur.execute(
+                            f'SELECT MIN("{col_name}"), MAX("{col_name}") FROM "{table_name}"'
+                        ).fetchone()
+                        if row and row[0] is not None:
+                            stats[col_name] = {"min": str(row[0]), "max": str(row[1])}
+                    except Exception:
+                        pass
+
             metadata[table_name] = {
                 "columns": columns,
                 "sample": sample,
                 "foreign_keys": foreign_keys,
+                "stats": stats,
             }
 
         return metadata

@@ -31,8 +31,8 @@ def execute_query(db_path: Union[str, Path], sql: str, limit: int = 100) -> dict
             "columns": [],
         }
 
-    # 2) Wrap SQL to enforce row limit safely
-    safe_sql = f"SELECT * FROM ({sql.rstrip(';')}) LIMIT {int(limit)}"
+    # 2) Fetch one extra row to detect truncation, then trim
+    safe_sql = f"SELECT * FROM ({sql.rstrip(';')}) LIMIT {int(limit) + 1}"
 
     try:
         with sqlite3.connect(db_path) as conn:
@@ -46,11 +46,16 @@ def execute_query(db_path: Union[str, Path], sql: str, limit: int = 100) -> dict
             "error": str(exc),
             "rows": [],
             "columns": [],
+            "truncated": False,
         }
+
+    truncated = len(rows) > limit
+    rows = rows[:limit]
 
     return {
         "status": "ok",
         "error": None,
         "rows": rows,
         "columns": columns,
+        "truncated": truncated,
     }

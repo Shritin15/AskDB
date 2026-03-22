@@ -3,35 +3,83 @@
 from __future__ import annotations
 
 
+def schema_to_prompt_text(schema: dict) -> str:
+    """
+    Convert a schema dict into a readable text block for the LLM prompt.
+    Includes column types, range hints (min/max), sample rows, and foreign keys.
+    Much clearer than raw JSON and more token-efficient.
+    """
+    import json as _json
+    lines = []
+    for table, info in schema.items():
+        lines.append(f"TABLE: {table}")
+        lines.append("  COLUMNS:")
+        stats = info.get("stats", {})
+        for col in info.get("columns", []):
+            pk        = " [PK]" if col.get("pk") else ""
+            notnull   = " NOT NULL" if col.get("notnull") else ""
+            col_stats = stats.get(col["name"])
+            stat_hint = f" [range: {col_stats['min']} to {col_stats['max']}]" if col_stats else ""
+            lines.append(f"    - {col['name']} ({col['type'] or 'TEXT'}){pk}{notnull}{stat_hint}")
+        fks = info.get("foreign_keys", [])
+        if fks:
+            lines.append("  FOREIGN KEYS:")
+            for fk in fks:
+                lines.append(f"    - {fk['column']} → {fk['references']}")
+        samples = info.get("sample", [])
+        if samples:
+            lines.append(f"  SAMPLE ROW:")
+            lines.append(f"    {_json.dumps(samples[0])}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def nl_to_sql_prompt(question: str, schema_json: str, max_rows: int = 100, error_context: str | None = None):
     system_prompt = """
 You are a SQLite SQL generation engine that interprets natural language questions into SQL queries.
 
-You must:
+GENERAL RULES:
 - Return VALID JSON only.
 - Generate exactly ONE SELECT query.
 - Use ONLY tables and columns that appear in the schema. NEVER invent or guess column names.
+- Always wrap table and column names in double quotes: "table_name", "column_name".
 - Never use INSERT, UPDATE, DELETE, DROP, ALTER, or PRAGMA.
-- Be flexible and creative — interpret vague or imprecise questions in the most reasonable way.
-- For ranking questions ("top", "best", "most", "highest", "lowest", "worst") use ORDER BY + LIMIT.
-- For percentage/proportion questions use CAST and a subquery or CTE to compute ratios.
-- For count/volume questions use COUNT(*) or COUNT(DISTINCT col).
-- For average/mean questions use AVG(col).
-- For distribution questions use GROUP BY on a categorical column.
-- For trend/over time questions GROUP BY the date/year column and ORDER BY it.
-- For "show me something interesting" or "surprise me" generate a meaningful aggregation.
-- For comparison questions ("vs", "compared to", "difference between") use CASE or subqueries.
-- For "how many X per Y" questions use GROUP BY Y and COUNT or SUM on X.
-- For "which X has the most/least Y" use GROUP BY X, ORDER BY Y DESC/ASC, LIMIT 1.
-- Only reject if the question is truly unrelated to every table and column in the schema.
+- Only output CANNOT_ANSWER if the required tables/columns are completely absent from the schema.
+  Never refuse because you are uncertain — generate the SQL and let the result speak for itself.
 
-SQLite date handling rules (CRITICAL — read sample rows to confirm format):
-- Dates are stored as TEXT strings (e.g. "2013-06-17T00:00:00.000" or "2013-06-17").
-- To extract year: SUBSTR(col, 1, 4) or strftime('%Y', col).
-- To extract month: SUBSTR(col, 6, 2) or strftime('%m', col).
-- To extract day: SUBSTR(col, 9, 2) or strftime('%d', col).
+QUESTION PATTERNS:
+- Ranking ("top", "best", "most", "highest", "lowest", "worst"): ORDER BY + LIMIT.
+- Percentage/proportion: use CAST and a subquery or CTE to compute ratios.
+- Count/volume: COUNT(*) or COUNT(DISTINCT col).
+- Average/mean: AVG(col).
+- Distribution: GROUP BY on a categorical column.
+- Trend over time: GROUP BY year/date column and ORDER BY it.
+- "Year over year change" / "how has X changed": use a CTE with LAG() window function.
+- Comparison ("vs", "compared to", "difference between"): use CASE or subqueries.
+- "How many X per Y": GROUP BY Y and COUNT or SUM on X.
+- "Which X has the most/least Y": GROUP BY X, ORDER BY Y DESC/ASC, LIMIT 1.
+- "Show me something interesting" / "surprise me": meaningful aggregation on most interesting columns.
+
+SQLITE-SPECIFIC RULES (STRICT):
+- Do NOT use QUALIFY — SQLite does not support it.
+  Instead wrap window functions in a CTE and filter in the outer query:
+    WITH ranked AS (SELECT ..., ROW_NUMBER() OVER (...) AS rn FROM ...)
+    SELECT ... FROM ranked WHERE rn = 1
+- Window functions (LAG, LEAD, ROW_NUMBER, RANK, SUM OVER, etc.) ARE supported
+  but ONLY inside subqueries or CTEs, never directly with QUALIFY.
+- For "year over year" use LAG() in a CTE:
+    WITH yearly AS (SELECT SUBSTR("date_col",1,4) AS yr, COUNT(*) AS cnt FROM "table" GROUP BY yr)
+    SELECT yr, cnt, cnt - LAG(cnt) OVER (ORDER BY yr) AS change FROM yearly ORDER BY yr
+- Do NOT use ILIKE — use LIKE instead (SQLite LIKE is case-insensitive for ASCII).
+- Do NOT use :: for type casting — use CAST(value AS type) instead.
+- Do NOT use FULL OUTER JOIN.
+
+DATE HANDLING (CRITICAL — always check sample row for actual format):
+- Dates are TEXT strings (e.g. "2013-06-17T00:00:00.000" or "2013-06-17").
+- Extract year: SUBSTR("col", 1, 4) or strftime('%Y', "col").
+- Extract month: SUBSTR("col", 6, 2) or strftime('%m', "col").
+- Use [range: X to Y] hints in the schema to write accurate WHERE clauses.
 - NEVER assume year/month/day are separate columns unless explicitly in the schema.
-- Always inspect the sample row to understand the actual date format.
 
 Output format:
 {
@@ -43,13 +91,13 @@ Output format:
 
     error_section = ""
     if error_context:
-        error_section = f"\n\nPrevious SQL attempt failed with this error:\n{error_context}\nPlease fix the query — check column names carefully against the schema."
+        error_section = f"\n\nPrevious SQL attempt failed with this error:\n{error_context['error']}\n\nFailing query was:\n```sql\n{error_context.get('sql', '')}\n```\nFix the query — check column names and SQLite syntax carefully."
 
     user_prompt = f"""
 Question:
 {question}
 
-Available Schema (JSON):
+Available Schema:
 {schema_json}
 
 Row limit: {max_rows}{error_section}

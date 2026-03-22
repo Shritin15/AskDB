@@ -37,10 +37,14 @@ def ask_question(question: str, db_path: str, limit: int = 100) -> dict:
     query_result = execute_query(db_path, sql, limit=effective_limit)
 
     # 3️ Retry once if SQL errored (e.g. wrong column name)
+    # Pass both the error AND the failing SQL so the LLM can see exactly what went wrong
     if query_result["status"] == "error":
-        error_msg = query_result.get("error", "unknown error")
+        error_context = {
+            "error": query_result.get("error", "unknown error"),
+            "sql": sql,
+        }
         retry_response = generate_sql_from_question(
-            question, db_path, error_context=error_msg
+            question, db_path, error_context=error_context
         )
         if retry_response.get("status") == "ok" and retry_response.get("sql"):
             retry_sql = retry_response["sql"]
@@ -62,6 +66,7 @@ def ask_question(question: str, db_path: str, limit: int = 100) -> dict:
         "columns": query_result["columns"],
         "rows": query_result["rows"],
         "error": query_result["error"],
+        "truncated": query_result.get("truncated", False),
         "llm_response": llm_response,
     }
 
